@@ -1,48 +1,74 @@
-import numpy as np
-from flask import Flask, request, render_template, Response
-import pickle
-# from distutils.log import debug
-from fileinput import filename
+from flask import Flask, request, render_template, Response, jsonify, session
+from flask_wtf import FlaskForm
+from wtforms import FileField, SubmitField, StringField, DecimalRangeField, IntegerRangeField
+from werkzeug.utils import secure_filename
+from wtforms.validators import InputRequired, NumberRange
 import os
 import cv2
 
-save_dir = os.path.join('static', 'uploads')
+from skeleton_testing import video_detection
 
 app = Flask(__name__)
-app.config['UPLOAD_FOLDER'] = save_dir
+app.config['SECRET_KEY'] = 'amanniyad'
+app.config['UPLOAD_FOLDER'] = 'static/uploads'
 
-model = pickle.load(open('models/model.pkl', 'rb'))
-cam_port = 0
-cam = cv2.VideoCapture(cam_port)
-def gen_frames():  
-    while True:
-        success, frame = cam.read()  # read the camera frame
-        if not success:
-            break
-        else:
-            ret, buffer = cv2.imencode('.jpg', frame)
-            frame = buffer.tobytes()
-            yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')  
 
-@app.route('/')
+class UploadFileForm(FlaskForm):
+    file = FileField("File", validators=[InputRequired()])
+    submit = SubmitField("Run")
+
+
+def gen_frames(path_x=''):
+    yolo_output = video_detection(path_x)
+
+    for detection in yolo_output:
+        refr, buffer = cv2.imencode('.jpg', detection)
+        frame = buffer.tobytes()
+        yield (b'--frame\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+
+def gen_frames_web(path_x):
+    yolo_output = video_detection(path_x)
+
+    for detection in yolo_output:
+        refr, buffer = cv2.imencode('.jpg', detection)
+        frame = buffer.tobytes()
+        yield (b'--frame\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+
+
+@app.route('/', methods=['GET', 'POST'])
 def main():
+    session.clear()
     return render_template('index1.html')
 
-# @app.route('/result', methods=['POST','GET'])
-# def result():
-#     if (request.method == 'POST'):
-#         f = request.files['file']
-#         full_filename = os.path.join(app.config['UPLOAD_FOLDER'],f.filename)
-#         f.save(full_filename)
-#         model(full_filename, save=True, project=app.config['UPLOAD_FOLDER'], exist_ok=True)
-#         output = os.path.join(app.config['UPLOAD_FOLDER'],'predict',f.filename)
-#         return render_template("acknowledgement.html",user_image = output)
-#     # return render_template("acknowledgement.html")
-#
-@app.route('/video_feed')
-def video_feed():
-    return Response(gen_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route('/upload', methods=['GET', 'POST'])
+def uploadvideo():
+    form = UploadFileForm()
+    if form.validate_on_submit():
+        file = form.file.data
+        file.save(os.path.join(os.path.abspath(os.path.dirname(__file__)), app.config['UPLOAD_FOLDER'],
+                           secure_filename(file.filename)))
+        session['video_path'] = os.path.join(os.path.abspath(os.path.dirname(__file__)), app.config['UPLOAD_FOLDER'],
+                                         secure_filename(file.filename))
+    return render_template('upload_webpage.html', form=form)
+
+
+@app.route('/webcam', methods=['GET', 'POST'])
+def webcamVideo():
+    session.clear()
+    return render_template('webcam_webpage.html')
+
+
+@app.route('/videoFeed')
+def videoFeed():
+    return Response(gen_frames(session.get('video_path', None)), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route('/webcamFeed')
+def webcamFeed():
+    return Response(gen_frames_web(0), mimetype='multipart/x-mixed-replace; boundary=frame')
+
 
 if __name__ == '__main__':
     # app.run(debug=True)
